@@ -99,7 +99,7 @@ class LogoDesignOrchestrator:
         self.session_state[session_id] = state
         return {"message": system_greeting["content"]}
 
-    def process_user_message(self, session_id: str, user_message: str) -> Dict[str, Any]:
+    async def process_user_message(self, session_id: str, user_message: str) -> Dict[str, Any]:
         state = self.session_state.get(session_id)
         if not state:
             return {"error": "Session not found"}
@@ -119,10 +119,10 @@ class LogoDesignOrchestrator:
                 state = self.agent.summary_agent(state)
 
                 print("[STEP] Moving to designer_agent")
-                state = self.agent.designer_agent(state)
+                state = await self.agent.designer_agent(state)
 
                 print("[STEP] Moving to generator_agent")
-                state = asyncio.run(self.agent.generator_agent(state))  # <- You will fix this to `await` or restructure to handle async
+                state = await self.agent.generator_agent(state)
 
                 print("[STEP] Moving to ranking_agent")
                 state = self.agent.ranking_agent(state)
