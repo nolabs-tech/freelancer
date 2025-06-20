@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Logo Design Agent</title>
+  <style>
+    body { font-family: sans-serif; margin: 2rem; }
+    #chat { border: 1px solid #ccc; padding: 1rem; max-width: 600px; }
+    .msg { margin-bottom: 1rem; }
+    .user { font-weight: bold; color: blue; }
+    .bot { font-weight: bold; color: green; }
+    img { max-width: 200px; margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h2>🧠 AI Logo Design Chat</h2>
+  <button onclick="startSession()">Start Session</button>
+  <div id="chat"></div>
+  <input type="text" id="messageInput" placeholder="Type a message..." />
+  <button onclick="sendMessage()">Send</button>
+
+  <script>
+    let sessionId = null;
+
+    async function startSession() {
+      const res = await fetch("/tech_logo", { method: "GET" });
+      const data = await res.json();
+      sessionId = data.session_id;
+      appendMessage("bot", data.message);
+    }
+
+    async function sendMessage() {
+      const input = document.getElementById("messageInput");
+      const msg = input.value.trim();
+      if (!msg || !sessionId) return;
+
+      appendMessage("user", msg);
+      input.value = "";
+
+      const res = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, message: msg })
+      });
+
+      const data = await res.json();
+      renderConversation(data.conversation);
+    }
+
+    function renderConversation(convo) {
+      const chat = document.getElementById("chat");
+      chat.innerHTML = "";
+      convo.forEach(msg => {
+        appendMessage(msg.role, msg.content);
+      });
+    }
+
+    function appendMessage(role, content) {
+      const chat = document.getElementById("chat");
+      const div = document.createElement("div");
+      div.className = `msg ${role}`;
+      div.innerHTML = `<div><strong>${role}:</strong></div><div>${renderContent(content)}</div>`;
+      chat.appendChild(div);
+    }
+
+    function renderContent(content) {
+      if (typeof content !== "string") return JSON.stringify(content);
+      // if image URL exists
+      const urlRegex = /(https?:\/\/[^ ]+\.(png|jpg|jpeg|gif))/g;
+      return content.replace(urlRegex, url => `<img src="${url}" alt="logo" />`);
+    }
+  </script>
+</body>
+</html>
