@@ -46,7 +46,7 @@ class ChatRequest(BaseModel):
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
-    result = orchestrator.process_user_message(
+    result = await orchestrator.process_user_message(
         session_id=request.session_id,
         user_message=request.message
     )

@@ -32,8 +32,9 @@ class LogoDesignAgents:
         4. Technical requirements and applications
         5. Competitive context and differentiation goals
         
-        Keep the conversation professional but efficient. Once you have comprehensive information, 
-        summarize what you've learned and confirm with the user before concluding."""
+        Keep the conversation professional, short but efficient. Once you have comprehensive information, 
+        summarize what you've learned and confirm with the user before concluding. Ask as less questions as possible. Do not respond with 
+        Large texts. It should not feel like a headache to user"""
         
         messages = [SystemMessage(content=system_prompt)]
         
@@ -55,10 +56,17 @@ class LogoDesignAgents:
             {"role": "assistant", "content": response.content}
         ])
         
-        # Check if consultation is complete (basic heuristic)
-        is_complete = any(keyword in response.content.lower() 
-                         for keyword in ["summary", "captured", "next steps", "design concepts"])
-        
+        recent_user_msg = state["user_input"].lower().strip()
+        recent_assistant_msg = response.content.lower()
+
+        user_said_yes = any(x in recent_user_msg for x in ["yes", "go ahead", "correct", "that's right", "sounds good"])
+        assistant_provided_summary = any(
+            x in recent_assistant_msg for x in [
+                "to summarize", "summary", "here’s what i understood", "let me recap", "does this accurately capture"
+            ]
+        )
+
+        is_complete = user_said_yes and assistant_provided_summary
         return {
             **state,
             "conversation_history": conversation_history,
@@ -135,118 +143,153 @@ class LogoDesignAgents:
                 "error_message": "Failed to parse client requirements",
                 "current_step": "error"
             }
-    
-    def designer_agent(self, state: LogoDesignState) -> LogoDesignState:
-        """Creates design concepts and specifications"""
         
+    async def designer_agent(self, state: LogoDesignState) -> LogoDesignState:
+        """Creates design concepts and specifications using LLM"""
+
+        # REMOVE: AgentConfig dependency
+        # config = AgentConfig.get_config("designer")
+
         system_prompt = """You are an elite logo designer creating concepts for tech companies.
-        
-        Based on the client requirements, create 3 distinct logo concepts in this JSON format:
-        
-        {
-            "concepts": [
-                {
-                    "concept_id": 1,
-                    "name": "Concept Name",
-                    "description": "Brief description of the design approach",
-                    "style": "minimalist/geometric/wordmark/symbol/etc",
-                    "color_palette": {
-                        "primary": "#hexcode",
-                        "secondary": "#hexcode",
-                        "accent": "#hexcode"
-                    },
-                    "typography": "Font style/approach",
-                    "symbol_concept": "Description of any symbols/icons",
-                    "rationale": "Why this concept fits the brand",
-                    "generation_prompt": "Detailed prompt for AI generation"
-                }
-            ],
-            "design_rationale": "Overall strategic reasoning",
-            "technical_notes": "Implementation considerations"
-        }
-        
-        Create generation_prompt that's optimized for DALL-E 3 logo generation.
-        Return ONLY the JSON structure."""
-        
+
+    Based on the client requirements, create 3 distinct logo concepts in this JSON format:
+
+    {
+        "concepts": [
+            {
+                "concept_id": 1,
+                "name": "Concept Name",
+                "description": "Brief description of the design approach",
+                "style": "minimalist/geometric/wordmark/symbol/etc",
+                "color_palette": {
+                    "primary": "#hexcode",
+                    "secondary": "#hexcode",
+                    "accent": "#hexcode"
+                },
+                "typography": "Font style/approach",
+                "symbol_concept": "Description of any symbols/icons",
+                "rationale": "Why this concept fits the brand",
+                "midjourney_prompt": "Optimized prompt for Midjourney generation"
+            }
+        ],
+        "design_rationale": "Overall strategic reasoning",
+        "technical_notes": "Implementation considerations"
+    }
+
+    Create midjourney_prompt that's optimized for Midjourney logo generation.
+    Use parameters like --ar 1:1 --style raw --v 6.0 for best results.
+    Return ONLY the JSON structure."""
+
         requirements_text = json.dumps(state["client_requirements"], indent=2)
-        
+
         messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=f"Client Requirements:\n{requirements_text}")
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Client Requirements:\n{requirements_text}"}
         ]
-        
-        response = self.llm.invoke(messages)
-        
+
         try:
-            design_concepts = json.loads(response.content)
+            print("[🎨 DESIGNER AGENT] Requesting logo concepts from LLM...")
+
+            # REMOVE: config["provider"], USE default provider
+            response = await self.llm_manager.generate_text(messages)
+
+            print("[✅ RAW LLM RESPONSE]")
+            print(response)
+
+            design_concepts_json = json.loads(response)
+
+            # Print each concept clearly to terminal
+            for concept in design_concepts_json.get("concepts", []):
+                print("\n[🧠 DESIGN CONCEPT]")
+                print(f"Name: {concept['name']}")
+                print(f"Style: {concept['style']}")
+                print(f"Colors: {concept['color_palette']}")
+                print(f"Typography: {concept['typography']}")
+                print(f"Prompt: {concept['midjourney_prompt']}\n")
+
             return {
                 **state,
-                "design_concepts": design_concepts["concepts"],
+                "design_concepts": design_concepts_json["concepts"],
                 "current_step": "generate"
             }
-        except json.JSONDecodeError:
+
+        except json.JSONDecodeError as e:
+            print("[❌ DESIGNER ERROR] Failed to parse JSON:\n", e)
+            print("[❌ RAW RESPONSE WAS]:\n", response)
             return {
                 **state,
                 "error_message": "Failed to parse design concepts",
                 "current_step": "error"
             }
-    
-    async def generator_agent(self, state: LogoDesignState) -> LogoDesignState:
-        """Generates actual logo images using Replicate"""
-        
-        generated_logos = []
-        log_file = "generated_images_log.txt"
-        os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
-        async def generate_for_concept(concept):
-            print(f"\n[🔄 LOG] Generating image for concept: {concept['name']}")
-            result = await self.replicate_provider.generate_image(
-                prompt=concept["generation_prompt"],
-                width=1024,
-                height=1024,
-                style="minimal tech logo"
-            )
-            print(f"[✅ IMAGE GENERATED] {concept['name']}: {result['image_url']}")
-
-            # Log to file
-            with open(log_file, "a") as f:
-                f.write(f"[{datetime.now()}] {concept['name']} → {result['image_url']}\n")
-
+        except Exception as e:
+            print("[❌ DESIGNER AGENT EXCEPTION]", str(e))
             return {
-                "concept_id": concept["concept_id"],
-                "concept_name": concept["name"],
-                "image_url": result["image_url"],
-                "variations": {
-                    "primary": result["image_url"],
-                    "horizontal": result["image_url"],
-                    "icon": result["image_url"]
-                },
-                "generation_metadata": {
-                    "prompt_used": concept["generation_prompt"],
-                    "generation_time": result.get("generation_time", "unknown"),
-                    "model": result.get("model", "replicate/unknown")
-                }
+                **state,
+                "error_message": f"Designer agent error: {str(e)}",
+                "current_step": "error"
             }
+    
+    def generator_agent(self, state: LogoDesignState) -> LogoDesignState:
+        """Generates logo images and attaches to chat. Compatible with sync context."""
+        import asyncio
+        from datetime import datetime
+        import os
 
-        generated_logos = await asyncio.gather(
-            *[generate_for_concept(concept) for concept in state["design_concepts"]]
-        )
+        async def generate_all():
+            generated_logos = []
+            log_file = "generated_images_log.txt"
+            os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
-        # Add generated image URLs to the chat
+            async def generate_for_concept(concept):
+                print(f"[🔄 LOG] Generating image for concept: {concept['name']}")
+                result = await self.replicate_provider.generate_image(
+                    prompt=concept["generation_prompt"],
+                    width=1024,
+                    height=1024,
+                    style="minimal tech logo"
+                )
+                print(f"[✅ IMAGE GENERATED] {concept['name']}: {result['image_url']}")
+
+                with open(log_file, "a") as f:
+                    f.write(f"[{datetime.now()}] {concept['name']} → {result['image_url']}\n")
+
+                return {
+                    "concept_id": concept["concept_id"],
+                    "concept_name": concept["name"],
+                    "image_url": result["image_url"],
+                    "variations": {
+                        "primary": result["image_url"],
+                        "horizontal": result["image_url"],
+                        "icon": result["image_url"]
+                    },
+                    "generation_metadata": {
+                        "prompt_used": concept["generation_prompt"],
+                        "generation_time": result.get("generation_time", "unknown"),
+                        "model": result.get("model", "replicate/unknown")
+                    }
+                }
+
+            return await asyncio.gather(*[generate_for_concept(c) for c in state["design_concepts"]])
+
+        # Handle running loop issue
+        try:
+            generated_logos = asyncio.run(generate_all())
+        except RuntimeError:  # Already inside async loop
+            generated_logos = asyncio.get_event_loop().run_until_complete(generate_all())
+
         image_message = {
             "role": "assistant",
-            "content": "🖼️ Here are the generated logo concepts:\n" +
+            "content": "🖼️ Here are your logo concepts:\n" +
                     "\n".join([logo["image_url"] for logo in generated_logos])
         }
         state["conversation_history"].append(image_message)
-
-        print(f"[LOG ✅] Total images generated: {len(generated_logos)}\n")
 
         return {
             **state,
             "generated_logos": generated_logos,
             "generation_attempts": state.get("generation_attempts", 0) + 1,
-            "current_step": "ranking",
+            "current_step": "ranking"
         }
     
     
